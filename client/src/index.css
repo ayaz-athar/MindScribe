@@ -1,0 +1,91 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --crimson: #8B2626;
+    --sunset: #EF6905;
+    --cream: #F1E5A1;
+    --forest: #486C2F;
+    --bg-base: #0c0d10;
+    --surface-card: #14161c;
+    --surface-panel: #101217;
+  }
+
+  body {
+    background-color: var(--bg-base);
+    color: #fbf8eb;
+    background-image: 
+      radial-gradient(circle at 15% 10%, rgba(139, 38, 38, 0.09) 0%, transparent 45%),
+      radial-gradient(circle at 85% 20%, rgba(72, 108, 47, 0.08) 0%, transparent 45%),
+      radial-gradient(circle at 50% 90%, rgba(239, 105, 5, 0.06) 0%, transparent 50%);
+    background-attachment: fixed;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* Super Smooth Transitions */
+* {
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Custom Smooth Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0c0d10;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(241, 229, 161, 0.2);
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(239, 105, 5, 0.6);
+}
+
+/* Glassmorphism and Glow Helpers */
+.glass-panel {
+  background: rgba(20, 22, 28, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(241, 229, 161, 0.1);
+  box-shadow: inset 0 1px 0 rgba(241, 229, 161, 0.08), 0 8px 32px rgba(0, 0, 0, 0.35);
+}
+
+.glass-card {
+  background: rgba(20, 22, 28, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(241, 229, 161, 0.08);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+}
+
+.glass-card:hover {
+  border-color: rgba(239, 105, 5, 0.35);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px -4px rgba(239, 105, 5, 0.15), 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #EF6905 0%, #8B2626 100%);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(239, 105, 5, 0.3);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-primary:hover {
+  background: linear-gradient(135deg, #ff7e1d 0%, #a43232 100%);
+  box-shadow: 0 6px 24px rgba(239, 105, 5, 0.45);
+  transform: translateY(-1px);
+}
+
+.btn-primary:active {
+  transform: translateY(1px) scale(0.98);
+}
