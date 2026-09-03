@@ -72,7 +72,7 @@ export default function App() {
       }
     } catch (err) {
       console.error('Save failed:', err);
-      alert(err.message || 'Failed to save entry');
+      showToast(err.message || 'Failed to save entry');
       throw err;
     }
   };
@@ -90,7 +90,7 @@ export default function App() {
       showToast('Entry deleted');
     } catch (err) {
       console.error('Delete failed:', err);
-      alert(err.message || 'Failed to delete entry');
+      showToast(err.message || 'Failed to delete entry');
     }
   };
 
