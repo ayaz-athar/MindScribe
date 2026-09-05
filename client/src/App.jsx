@@ -176,7 +176,7 @@ export default function App() {
 
   const handleReflect = async (entry) => {
     setActiveTab('ai-coach');
-    showToast('Analyzing thoughts with Gemini AI on Cloud Run...');
+    showToast('Analyzing thoughts with MindScribe Gemini AI...');
     try {
       const res = await apiService.generateReflection(entry.content, entry.mood, entry.id);
       setActiveReflection(res.reflection);
