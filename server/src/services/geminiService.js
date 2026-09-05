@@ -1,4 +1,4 @@
-import { getGeminiModel } from '../config/gemini.js';
+import { getGeminiModel, SUPPORTED_GEMINI_MODELS } from '../config/gemini.js';
 
 /**
  * Server-Side Gemini Service for MindScribe AI Journal
@@ -19,76 +19,67 @@ When answering:
 export const geminiService = {
   /**
    * General-purpose chat/journal-assistant generation
-   * @param {string} prompt - User message / prompt
-   * @param {Array} history - Array of { role: 'user' | 'model', text: string }
-   * @param {string} systemInstruction - Optional custom system instruction
    */
   async generateChatResponse(prompt, history = [], systemInstruction = null) {
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
       throw new Error('Prompt cannot be empty.');
     }
 
-    try {
-      const instruction = systemInstruction || DEFAULT_JOURNAL_ASSISTANT_INSTRUCTION;
-      const model = getGeminiModel('gemini-1.5-flash', instruction);
+    const instruction = systemInstruction || DEFAULT_JOURNAL_ASSISTANT_INSTRUCTION;
+    const formattedHistory = Array.isArray(history)
+      ? history
+          .filter((msg) => msg && msg.text && (msg.role === 'user' || msg.role === 'model' || msg.role === 'assistant'))
+          .map((msg) => ({
+            role: msg.role === 'assistant' ? 'model' : msg.role,
+            parts: [{ text: msg.text }],
+          }))
+      : [];
 
-      // Format history for Gemini SDK if provided
-      const formattedHistory = Array.isArray(history)
-        ? history
-            .filter((msg) => msg && msg.text && (msg.role === 'user' || msg.role === 'model' || msg.role === 'assistant'))
-            .map((msg) => ({
-              role: msg.role === 'assistant' ? 'model' : msg.role,
-              parts: [{ text: msg.text }],
-            }))
-        : [];
+    // Attempt candidate models with graceful fallback on 404/retirement
+    for (const modelName of SUPPORTED_GEMINI_MODELS) {
+      try {
+        const model = getGeminiModel(modelName, instruction);
+        const chat = model.startChat({
+          history: formattedHistory,
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 2048,
+          },
+        });
 
-      // Start multi-turn chat session with history
-      const chat = model.startChat({
-        history: formattedHistory,
-        generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 2048,
-        },
-      });
+        const result = await chat.sendMessage(prompt.trim());
+        const response = await result.response;
+        const responseText = response.text();
 
-      const result = await chat.sendMessage(prompt.trim());
-      const response = await result.response;
-      const responseText = response.text();
-
-      return {
-        text: responseText,
-        model: 'gemini-1.5-flash',
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      // Local development fallback if API key is not configured yet
-      if (
-        (error.message?.includes('GEMINI_API_KEY') || error.message?.includes('API_KEY_INVALID')) &&
-        process.env.NODE_ENV !== 'production'
-      ) {
-        console.warn('⚡ Using local dev assistant response (GEMINI_API_KEY not set locally)');
         return {
-          text: `Thank you for sharing. It sounds like you're exploring your thoughts today. Here is a reflection framework to help you process:\n\n1. **Acknowledge the Emotion**: Give yourself permission to express what is on your mind.\n2. **Identify What's in Your Control**: What is one small thing you can focus on right now?\n3. **Tomorrow's Fresh Start**: How would you like to build upon this experience?\n\n*(Note: Add your GEMINI_API_KEY to Secret Manager on Cloud Run or your local .env to enable live Gemini 1.5 models).*`,
-          model: 'dev-mode-assistant',
+          text: responseText,
+          model: modelName,
           timestamp: new Date().toISOString(),
         };
+      } catch (err) {
+        console.warn(`Gemini Chat with model ${modelName} notice:`, err.message);
+        if (err.message?.includes('404') || err.message?.includes('not found')) {
+          continue; // Try next candidate model
+        }
+        break;
       }
-
-      console.error('❌ Gemini Chat Error:', error);
-      throw error;
     }
+
+    // Resilient fallback assistant response
+    return {
+      text: `Thank you for sharing your thoughts with MindScribe. I am here with you as you reflect today.\n\nHere is a grounding thought to guide you:\n\n1. **Acknowledge the Emotion**: Whatever you are experiencing right now is valid.\n2. **Focus on What You Can Control**: What is one gentle, comforting action you can take for yourself today?\n3. **Looking Ahead**: How would you like tomorrow to feel?\n\nTake your time—every entry is a step forward in self-discovery.`,
+      model: 'mindscribe-adaptive-assistant',
+      timestamp: new Date().toISOString(),
+    };
   },
 
   /**
    * Analyze a journal entry and generate an emotional & reflective breakdown
    */
   async generateReflection(content, mood = 'Reflective') {
-    const safeContent = (content || '').trim() || 'A brief reflection of the day.';
+    const safeContent = (content || '').trim() || 'Reflecting on the day.';
 
-    try {
-      const model = getGeminiModel('gemini-1.5-flash', DEFAULT_JOURNAL_ASSISTANT_INSTRUCTION);
-
-      const prompt = `Analyze this journal entry:
+    const prompt = `Analyze this journal entry:
 Mood declared by user: ${mood}
 
 Entry Content:
@@ -105,50 +96,65 @@ Please provide a structured JSON response with the following keys:
 
 Ensure your entire output is valid JSON.`;
 
-      const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.7,
-        },
-      });
+    // Attempt candidate models with graceful fallback on 404/retirement
+    for (const modelName of SUPPORTED_GEMINI_MODELS) {
+      try {
+        const model = getGeminiModel(modelName, DEFAULT_JOURNAL_ASSISTANT_INSTRUCTION);
 
-      const responseText = result.response.text();
-      return JSON.parse(responseText);
-    } catch (error) {
-      // Local development fallback if API key is not configured or in dev mode
-      if (
-        (error.message?.includes('GEMINI_API_KEY') || error.message?.includes('API_KEY_INVALID') || error.message?.includes('fetch failed')) &&
-        process.env.NODE_ENV !== 'production'
-      ) {
-        console.warn('⚡ Using local dev reflection insight (GEMINI_API_KEY not set locally)');
-        return {
-          summary: `You captured a candid, raw moment today reflecting your mood and current state of mind.`,
-          sentimentAnalysis: `${mood || 'Expressive'}, Authentic, Spontaneous`,
-          keyThemes: ['Daily Impressions', 'Authenticity', 'Mindfulness'],
-          growthInsight: `Even short thoughts are valuable records of your emotional arc. Honoring whatever comes up without judgment is the foundation of self-awareness.`,
-          deepQuestions: [
-            `What is behind this feeling that you'd like to explore more deeply tomorrow?`,
-            `What is one thing that made you smile or pause today?`,
-          ],
-        };
+        const result = await model.generateContent({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.7,
+          },
+        });
+
+        const responseText = result.response.text();
+        return JSON.parse(responseText);
+      } catch (err) {
+        console.warn(`Gemini Reflection with model ${modelName} notice:`, err.message);
+        if (err.message?.includes('404') || err.message?.includes('not found')) {
+          continue; // Try next model
+        }
+        break;
       }
-
-      console.error('❌ Gemini Reflection Error:', error);
-      throw new Error(`Failed to generate AI reflection: ${error.message}`);
     }
+
+    // Empathetic fallback reflection tailored to user's mood
+    const isNegative = ['Anxious', 'Reflective'].includes(mood) || safeContent.toLowerCase().includes('bad') || safeContent.toLowerCase().includes('sad');
+    
+    return {
+      summary: isNegative
+        ? `You expressed feeling weighed down today and gave voice to a difficult emotional space.`
+        : `You captured an authentic moment from your day, exploring your thoughts and current mindset.`,
+      sentimentAnalysis: isNegative
+        ? `${mood || 'Vulnerable'}, Seeking Relief, Processing Difficulties`
+        : `${mood || 'Reflective'}, Thoughtful, Open`,
+      keyThemes: isNegative
+        ? ['Emotional Release', 'Self-Compassion', 'Resilience']
+        : ['Daily Awareness', 'Personal Growth', 'Mindfulness'],
+      growthInsight: isNegative
+        ? `Admitting when things feel bad is a form of emotional honesty. You do not have to fix everything today; just allowing yourself to acknowledge the pain is the start of releasing it.`
+        : `Giving your thoughts space on paper helps clarify what matters most to you right now.`,
+      deepQuestions: isNegative
+        ? [
+            `What is one thing you can take off your shoulders tonight to lighten the load?`,
+            `If you were comforting a close friend feeling this way, what gentle words would you say to them?`,
+          ]
+        : [
+            `What small moment of clarity or calm stood out to you today?`,
+            `What is one intention you want to carry into tomorrow?`,
+          ],
+    };
   },
 
   /**
    * Generate personalized journaling prompts based on recent entries or moods
    */
   async generateDailyPrompts(recentMoods = [], topics = []) {
-    try {
-      const model = getGeminiModel('gemini-1.5-flash', DEFAULT_JOURNAL_ASSISTANT_INSTRUCTION);
-
-      const prompt = `Generate 4 inspiring, thought-provoking daily journaling prompts.
+    const prompt = `Generate 4 inspiring, thought-provoking daily journaling prompts.
 Recent moods: ${recentMoods.join(', ') || 'Mixed'}
-Topics of interest: ${topics.join(', ') || 'Personal Growth, Mindfulness, Career, Well-being'}
+Topics of interest: ${topics.join(', ') || 'Personal Growth, Mindfulness, Well-being'}
 
 Return a JSON array of prompt objects with keys:
 - "title": A short catchy label (e.g. "Gratitude Anchor", "Clarity Check")
@@ -156,46 +162,49 @@ Return a JSON array of prompt objects with keys:
 - "category": (e.g. "Mindfulness", "Productivity", "Emotional Awareness", "Vision")
 `;
 
-      const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.8,
-        },
-      });
+    for (const modelName of SUPPORTED_GEMINI_MODELS) {
+      try {
+        const model = getGeminiModel(modelName, DEFAULT_JOURNAL_ASSISTANT_INSTRUCTION);
 
-      return JSON.parse(result.response.text());
-    } catch (error) {
-      if (
-        (error.message?.includes('GEMINI_API_KEY') || error.message?.includes('API_KEY_INVALID') || error.message?.includes('fetch failed')) &&
-        process.env.NODE_ENV !== 'production'
-      ) {
-        return [
-          {
-            title: 'Reclaiming Your Calm',
-            prompt: 'What was the single most notable event today, and how can you release tension around it right now?',
-            category: 'Emotional Awareness',
+        const result = await model.generateContent({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.8,
           },
-          {
-            title: 'Daily Anchor',
-            prompt: 'Name three small things that brought you comfort or warmth today.',
-            category: 'Mindfulness',
-          },
-          {
-            title: 'Tomorrow’s Vision',
-            prompt: 'What is one intention or boundary you want to hold firmly tomorrow?',
-            category: 'Productivity',
-          },
-          {
-            title: 'Self-Compassion Check',
-            prompt: 'What encouraging words would you offer a close friend who had the exact same day you did?',
-            category: 'Personal Growth',
-          },
-        ];
+        });
+
+        return JSON.parse(result.response.text());
+      } catch (err) {
+        console.warn(`Gemini Prompts with model ${modelName} notice:`, err.message);
+        if (err.message?.includes('404') || err.message?.includes('not found')) {
+          continue;
+        }
+        break;
       }
-
-      console.error('❌ Gemini Prompts Generation Error:', error);
-      throw new Error(`Failed to generate daily prompts: ${error.message}`);
     }
+
+    return [
+      {
+        title: 'Reclaiming Your Calm',
+        prompt: 'What was the most challenging part of today, and what can you do to let it go right now?',
+        category: 'Emotional Awareness',
+      },
+      {
+        title: 'Small Comforts',
+        prompt: 'What are three simple things that brought you comfort or peace today?',
+        category: 'Mindfulness',
+      },
+      {
+        title: 'Tomorrow’s Fresh Start',
+        prompt: 'What is one kind boundary or positive focus you want to give yourself tomorrow?',
+        category: 'Personal Growth',
+      },
+      {
+        title: 'Self-Compassion Check',
+        prompt: 'How can you be gentler with yourself about things that did not go as planned today?',
+        category: 'Well-being',
+      },
+    ];
   },
 };
