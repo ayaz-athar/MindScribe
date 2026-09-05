@@ -83,12 +83,34 @@ export default function JournalList({
         </div>
       </div>
 
-      {/* Entries List */}
+      {/* Entries Loading Skeleton */}
       {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-44 rounded-2xl bg-surface-card/60 border border-cream-300/10 animate-pulse" />
-          ))}
+        <div className="space-y-3">
+          <div className="flex items-center justify-center gap-2 py-2 text-xs text-cream-300/60 font-medium">
+            <span className="w-3.5 h-3.5 border-2 border-sunset-500 border-t-transparent rounded-full animate-spin" />
+            <span>Loading your private journal entries...</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="h-44 rounded-2xl bg-surface-card/60 border border-cream-300/10 p-5 flex flex-col justify-between animate-pulse">
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="h-5 w-20 bg-cream-300/10 rounded-full" />
+                    <div className="h-3 w-16 bg-cream-300/10 rounded" />
+                  </div>
+                  <div className="h-4 w-3/4 bg-cream-300/15 rounded mb-2.5" />
+                  <div className="space-y-1.5">
+                    <div className="h-3 w-full bg-cream-300/10 rounded" />
+                    <div className="h-3 w-5/6 bg-cream-300/10 rounded" />
+                  </div>
+                </div>
+                <div className="pt-3 border-t border-cream-300/10 flex items-center justify-between">
+                  <div className="h-4 w-16 bg-cream-300/10 rounded-lg" />
+                  <div className="h-5 w-16 bg-cream-300/10 rounded" />
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       ) : filteredEntries.length === 0 ? (
         <div className="text-center py-16 glass-panel border-dashed border-cream-300/15 rounded-2xl">

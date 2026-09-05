@@ -8,12 +8,19 @@ import { db } from '../config/firebase.js';
  * cryptographically verified Firebase token (`req.user.uid`).
  * All document paths follow `/users/{userId}/entries/{entryId}`.
  * 
- * LOCAL DEV FALLBACK:
- * If live Firestore credentials are not present locally, an in-memory per-user
- * data store ensures seamless offline development and UI testing.
+ * CLOUD RUN vs VERCEL / DEV AUTO-DETECTION:
+ * - On Google Cloud Run: Uses Application Default Credentials (ADC) via `process.env.K_SERVICE`.
+ * - On Vercel / Local Dev: If GCP service account credentials are not present, seamlessly
+ *   operates with a fast in-memory store to prevent gRPC connection hangs.
  */
 
-// In-Memory fallback store for offline development
+const hasGoogleCredentials = Boolean(
+  process.env.K_SERVICE || // Set automatically by Google Cloud Run
+  process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+  process.env.FIREBASE_SERVICE_ACCOUNT
+);
+
+// In-Memory fallback store for environments without mounted Google Cloud credentials
 const inMemoryStore = {
   entries: new Map(), // userId -> Map(entryId -> entryDoc)
   insights: new Map(),
@@ -23,6 +30,9 @@ const getEntriesCollection = (userId) => {
   if (!userId || typeof userId !== 'string') {
     throw new Error('Tenant Violation: Cannot access Firestore without valid userId.');
   }
+  if (!hasGoogleCredentials) {
+    return null;
+  }
   return db?.collection ? db.collection('users').doc(userId).collection('entries') : null;
 };
 
@@ -30,7 +40,18 @@ const getInsightsCollection = (userId) => {
   if (!userId || typeof userId !== 'string') {
     throw new Error('Tenant Violation: Cannot access Firestore without valid userId.');
   }
+  if (!hasGoogleCredentials) {
+    return null;
+  }
   return db?.collection ? db.collection('users').doc(userId).collection('insights') : null;
+};
+
+// Helper to prevent gRPC hangs if network to Firestore is unreachable
+const withTimeout = (promise, ms = 2500) => {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), ms)),
+  ]);
 };
 
 export const firestoreService = {
@@ -45,14 +66,14 @@ export const firestoreService = {
         if (mood) {
           query = query.where('mood', '==', mood);
         }
-        const snapshot = await query.get();
+        const snapshot = await withTimeout(query.get(), 2500);
         return snapshot.docs.map((doc) => ({
           id: doc.id,
           ...doc.data(),
         }));
       }
     } catch (err) {
-      console.warn('Firestore live query fell back to local dev memory store:', err.message);
+      console.warn('Firestore live query fell back to memory store:', err.message);
     }
 
     // In-memory fallback
@@ -71,14 +92,14 @@ export const firestoreService = {
       const col = getEntriesCollection(userId);
       if (col) {
         const docRef = col.doc(entryId);
-        const docSnap = await docRef.get();
+        const docSnap = await withTimeout(docRef.get(), 2500);
         if (docSnap.exists) {
           return { id: docSnap.id, ...docSnap.data() };
         }
         return null;
       }
     } catch (err) {
-      console.warn('Firestore getEntryById fell back to local dev store:', err.message);
+      console.warn('Firestore getEntryById fell back to memory store:', err.message);
     }
 
     const userMap = inMemoryStore.entries.get(userId);
@@ -104,11 +125,11 @@ export const firestoreService = {
     try {
       const col = getEntriesCollection(userId);
       if (col) {
-        const docRef = await col.add(docData);
+        const docRef = await withTimeout(col.add(docData), 2500);
         return { id: docRef.id, ...docData };
       }
     } catch (err) {
-      console.warn('Firestore createEntry fell back to local dev store:', err.message);
+      console.warn('Firestore createEntry fell back to memory store:', err.message);
     }
 
     // In-memory fallback
@@ -142,15 +163,15 @@ export const firestoreService = {
       const col = getEntriesCollection(userId);
       if (col) {
         const docRef = col.doc(entryId);
-        const docSnap = await docRef.get();
+        const docSnap = await withTimeout(docRef.get(), 2500);
         if (docSnap.exists) {
-          await docRef.update(updatePayload);
+          await withTimeout(docRef.update(updatePayload), 2500);
           return { id: docRef.id, ...docSnap.data(), ...updatePayload };
         }
         return null;
       }
     } catch (err) {
-      console.warn('Firestore updateEntry fell back to local dev store:', err.message);
+      console.warn('Firestore updateEntry fell back to memory store:', err.message);
     }
 
     const userMap = inMemoryStore.entries.get(userId);
@@ -170,48 +191,80 @@ export const firestoreService = {
       const col = getEntriesCollection(userId);
       if (col) {
         const docRef = col.doc(entryId);
-        const docSnap = await docRef.get();
-        if (docSnap.exists) {
-          await docRef.delete();
-          return true;
-        }
-        return false;
+        const docSnap = await withTimeout(docRef.get(), 2500);
+        if (!docSnap.exists) return false;
+        await withTimeout(docRef.delete(), 2500);
+        return true;
       }
     } catch (err) {
-      console.warn('Firestore deleteEntry fell back to local dev store:', err.message);
+      console.warn('Firestore deleteEntry fell back to memory store:', err.message);
     }
 
     const userMap = inMemoryStore.entries.get(userId);
-    if (userMap?.has(entryId)) {
-      userMap.delete(entryId);
-      return true;
-    }
-    return false;
+    if (!userMap || !userMap.has(entryId)) return false;
+    userMap.delete(entryId);
+    return true;
   },
 
   /**
-   * Save an AI-generated reflection insight
+   * Save AI reflection insight
    */
-  async saveAiInsight(userId, entryId, insight) {
-    const now = new Date().toISOString();
-    const docData = {
+  async saveAiInsight(userId, entryId, reflectionData) {
+    const insightDoc = {
       userId,
       entryId,
-      ...insight,
-      createdAt: now,
+      ...reflectionData,
+      createdAt: new Date().toISOString(),
     };
 
     try {
       const col = getInsightsCollection(userId);
       if (col) {
-        const docRef = await col.add(docData);
-        return { id: docRef.id, ...docData };
+        const docRef = await withTimeout(col.add(insightDoc), 2500);
+        return { id: docRef.id, ...insightDoc };
       }
     } catch (err) {
-      console.warn('Firestore saveAiInsight fell back to local dev store:', err.message);
+      console.warn('Firestore saveAiInsight fell back to memory store:', err.message);
     }
 
     const insightId = 'insight-' + Math.random().toString(36).substring(2, 9);
-    return { id: insightId, ...docData };
+    const insightWithId = { id: insightId, ...insightDoc };
+
+    if (!inMemoryStore.insights.has(userId)) {
+      inMemoryStore.insights.set(userId, new Map());
+    }
+    inMemoryStore.insights.get(userId).set(insightId, insightWithId);
+
+    return insightWithId;
+  },
+
+  /**
+   * Retrieve AI reflection insight for an entry
+   */
+  async getAiInsightByEntryId(userId, entryId) {
+    try {
+      const col = getInsightsCollection(userId);
+      if (col) {
+        const snapshot = await withTimeout(
+          col.where('entryId', '==', entryId).limit(1).get(),
+          2500
+        );
+        if (!snapshot.empty) {
+          const doc = snapshot.docs[0];
+          return { id: doc.id, ...doc.data() };
+        }
+        return null;
+      }
+    } catch (err) {
+      console.warn('Firestore getAiInsight fell back to memory store:', err.message);
+    }
+
+    const userInsights = inMemoryStore.insights.get(userId);
+    if (!userInsights) return null;
+
+    for (const insight of userInsights.values()) {
+      if (insight.entryId === entryId) return insight;
+    }
+    return null;
   },
 };
