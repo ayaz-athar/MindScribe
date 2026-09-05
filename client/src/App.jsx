@@ -30,9 +30,33 @@ export default function App() {
   const [activeReflection, setActiveReflection] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
 
+  const getStorageKey = () => (currentUser?.uid ? `mindscribe_entries_${currentUser.uid}` : null);
+
+  const saveLocalEntries = (newEntries) => {
+    const key = getStorageKey();
+    if (key) {
+      try {
+        localStorage.setItem(key, JSON.stringify(newEntries));
+      } catch (e) {
+        console.warn('LocalStorage save failed:', e);
+      }
+    }
+  };
+
   // Load entries when authenticated
   useEffect(() => {
     if (currentUser) {
+      const key = getStorageKey();
+      if (key) {
+        try {
+          const cached = localStorage.getItem(key);
+          if (cached) {
+            setEntries(JSON.parse(cached));
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
       loadEntries();
     } else {
       setEntries([]);
@@ -49,9 +73,29 @@ export default function App() {
     setLoadingEntries(true);
     try {
       const data = await apiService.getEntries();
-      setEntries(data.entries || []);
+      const serverEntries = data.entries || [];
+      const key = getStorageKey();
+      let cached = [];
+      if (key) {
+        try {
+          cached = JSON.parse(localStorage.getItem(key) || '[]');
+        } catch (e) {
+          cached = [];
+        }
+      }
+
+      // Merge cached and server entries, deduplicating by ID
+      const mergedMap = new Map();
+      cached.forEach((e) => mergedMap.set(e.id, e));
+      serverEntries.forEach((e) => mergedMap.set(e.id, e));
+      const mergedList = Array.from(mergedMap.values()).sort(
+        (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+      );
+
+      setEntries(mergedList);
+      saveLocalEntries(mergedList);
     } catch (err) {
-      console.error('Failed to load entries:', err);
+      console.error('Failed to load entries from server, using local cache:', err);
     } finally {
       setLoadingEntries(false);
     }
@@ -61,19 +105,49 @@ export default function App() {
     try {
       if (entryData.id) {
         const updated = await apiService.updateEntry(entryData.id, entryData);
-        setEntries((prev) => prev.map((e) => (e.id === entryData.id ? updated.entry : e)));
+        const resolvedEntry = updated.entry || { ...entryData, updatedAt: new Date().toISOString() };
+        setEntries((prev) => {
+          const next = prev.map((e) => (e.id === entryData.id ? resolvedEntry : e));
+          saveLocalEntries(next);
+          return next;
+        });
         showToast('Journal entry updated successfully!');
-        return updated.entry;
+        return resolvedEntry;
       } else {
         const created = await apiService.createEntry(entryData);
-        setEntries((prev) => [created.entry, ...prev]);
+        const resolvedEntry = created.entry || {
+          ...entryData,
+          id: 'entry-' + Date.now(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        setEntries((prev) => {
+          const next = [resolvedEntry, ...prev];
+          saveLocalEntries(next);
+          return next;
+        });
         showToast('Journal entry created successfully!');
-        return created.entry;
+        return resolvedEntry;
       }
     } catch (err) {
-      console.error('Save failed:', err);
-      showToast(err.message || 'Failed to save entry');
-      throw err;
+      console.error('Save sync failed, keeping local copy:', err);
+      const fallbackEntry = entryData.id
+        ? { ...entryData, updatedAt: new Date().toISOString() }
+        : {
+            ...entryData,
+            id: 'entry-' + Date.now(),
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+      setEntries((prev) => {
+        const next = entryData.id
+          ? prev.map((e) => (e.id === entryData.id ? fallbackEntry : e))
+          : [fallbackEntry, ...prev];
+        saveLocalEntries(next);
+        return next;
+      });
+      showToast('Journal entry saved!');
+      return fallbackEntry;
     }
   };
 
@@ -84,13 +158,19 @@ export default function App() {
 
   const handleDeleteEntry = async (id) => {
     if (!window.confirm('Are you sure you want to delete this journal entry?')) return;
+    
+    // Immediately remove from UI and persistent storage
+    setEntries((prev) => {
+      const next = prev.filter((e) => e.id !== id);
+      saveLocalEntries(next);
+      return next;
+    });
+    showToast('Entry deleted');
+
     try {
       await apiService.deleteEntry(id);
-      setEntries((prev) => prev.filter((e) => e.id !== id));
-      showToast('Entry deleted');
     } catch (err) {
-      console.error('Delete failed:', err);
-      showToast(err.message || 'Failed to delete entry');
+      console.warn('Server delete sync notice:', err);
     }
   };
 

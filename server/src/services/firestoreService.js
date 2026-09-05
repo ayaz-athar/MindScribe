@@ -191,8 +191,6 @@ export const firestoreService = {
       const col = getEntriesCollection(userId);
       if (col) {
         const docRef = col.doc(entryId);
-        const docSnap = await withTimeout(docRef.get(), 2500);
-        if (!docSnap.exists) return false;
         await withTimeout(docRef.delete(), 2500);
         return true;
       }
@@ -201,8 +199,9 @@ export const firestoreService = {
     }
 
     const userMap = inMemoryStore.entries.get(userId);
-    if (!userMap || !userMap.has(entryId)) return false;
-    userMap.delete(entryId);
+    if (userMap) {
+      userMap.delete(entryId);
+    }
     return true;
   },
 

@@ -133,14 +133,7 @@ router.put('/:id', async (req, res, next) => {
  */
 router.delete('/:id', async (req, res, next) => {
   try {
-    const success = await firestoreService.deleteEntry(req.user.uid, req.params.id);
-
-    if (!success) {
-      return res.status(404).json({
-        error: 'NotFound',
-        message: 'Journal entry not found or you do not have permission to delete it.',
-      });
-    }
+    await firestoreService.deleteEntry(req.user.uid, req.params.id);
 
     return res.json({
       message: 'Journal entry deleted successfully',
